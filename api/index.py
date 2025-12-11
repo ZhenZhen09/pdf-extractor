@@ -1,29 +1,27 @@
 from flask import Flask, request, render_template, jsonify
 import fitz  # PyMuPDF
-import google.generativeai as genai
 import os
 import json
 import io
 from PIL import Image
 import requests
-from dotenv import load_dotenv
 
-# Load env vars
-load_dotenv()
-
-# API Keys
-GENIE_API_KEY = os.getenv("GOOGLE_API_KEY")  # Optional
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")     # Required
-
-if not GROQ_API_KEY:
-    raise ValueError("Please set GROQ_API_KEY in your environment or .env file.")
-
-# Configure Google Gemini if key is provided
-if GENIE_API_KEY:
-    genai.configure(api_key=GENIE_API_KEY)
+try:
+    import google.generativeai as genai
+    GENIE_AVAILABLE = True
+except ImportError:
+    GENIE_AVAILABLE = False
 
 app = Flask(__name__, template_folder='../templates')
 
+# Read API keys from environment variables
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+if GENIE_AVAILABLE and GOOGLE_API_KEY:
+    genai.configure(api_key=GOOGLE_API_KEY)
+
+# Table headers
 TABLE_HEADERS = [
     "Customer Name",
     "Transaction Number",
@@ -34,71 +32,60 @@ TABLE_HEADERS = [
     "Description"
 ]
 
-def pdf_page_to_image(pdf_stream):
-    """Convert first page of PDF to PIL Image."""
-    doc = fitz.open(stream=pdf_stream, filetype="pdf")
+def pdf_page_to_image(pdf_bytes):
+    """Convert the first page of a PDF to a PIL Image."""
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     page = doc.load_page(0)
     pix = page.get_pixmap()
     img_data = pix.tobytes("png")
     return Image.open(io.BytesIO(img_data))
 
-def extract_table_from_image_gemini(image):
-    """Try extracting table using Google Gemini."""
-    if not GENIE_API_KEY:
+def extract_with_gemini(image):
+    """Extract table using Google Gemini."""
+    if not GENIE_AVAILABLE or not GOOGLE_API_KEY:
         return None
-
     image.thumbnail((1024, 1024))
     model = genai.GenerativeModel("gemini-2.5-flash")
     prompt = f"""
     Extract a table with the following columns:
     {', '.join(TABLE_HEADERS)}
-    Return valid JSON with key "table_data".
+    Return valid JSON with key 'table_data'.
     """
-
     try:
         response = model.generate_content(
             [prompt, image],
             generation_config={"response_mime_type": "application/json"}
         )
-        result = json.loads(response.text)
-        return result.get("table_data", [])
+        return json.loads(response.text).get("table_data", [])
     except Exception as e:
         print("Gemini extraction failed:", e)
         return None
 
-def extract_table_from_image_groq(image_bytes):
-    """Fallback using Groq OpenAI‑compatible Responses API."""
+def extract_with_groq(image_bytes):
+    """Fallback extraction using Groq API."""
+    if not GROQ_API_KEY:
+        raise ValueError("GROQ_API_KEY not set in environment.")
+    
     url = "https://api.groq.com/openai/v1/responses"
-    headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
+    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
     prompt = f"""
     Extract a table with the following columns:
     {', '.join(TABLE_HEADERS)}
-    Return valid JSON with key "table_data".
+    Return valid JSON with key 'table_data'.
     """
-
-    # Uses a supported Groq model with structured output
-    groq_model = "openai/gpt-oss-20b"
-
+    
     payload = {
-        "model": groq_model,
+        "model": "openai/gpt-oss-20b",  # Groq model
         "input": prompt + "\n" + image_bytes.decode("latin1")
     }
-
+    
     try:
         r = requests.post(url, headers=headers, json=payload, timeout=90)
         r.raise_for_status()
-        data = r.json()
-
-        # Groq responses API outputs text; parse JSON out of it
-        text = data.get("output_text", "")
+        text = r.json().get("output_text", "")
         return json.loads(text).get("table_data", [])
-
     except Exception as e:
-        print("Groq fallback failed:", e)
+        print("Groq extraction failed:", e)
         return []
 
 @app.route('/')
@@ -112,33 +99,33 @@ def extract_data():
         return jsonify({"error": "No files uploaded"}), 400
 
     all_rows = []
-    file_progress = []
+    progress_info = []
 
     for idx, file in enumerate(files):
         try:
             pdf_bytes = file.read()
             image = pdf_page_to_image(pdf_bytes)
 
-            # Try Gemini
-            rows = extract_table_from_image_gemini(image)
+            # Try Gemini first
+            rows = extract_with_gemini(image)
 
-            # Fallback to Groq if needed
+            # Fallback to Groq
             if rows is None:
                 pdf_bytes.seek(0)
-                img_bytes = io.BytesIO()
-                image.save(img_bytes, format="PNG")
-                img_bytes.seek(0)
-                rows = extract_table_from_image_groq(img_bytes.read())
+                img_buf = io.BytesIO()
+                image.save(img_buf, format="PNG")
+                img_buf.seek(0)
+                rows = extract_with_groq(img_buf.read())
 
             all_rows.extend(rows)
             percent = int(((idx + 1) / len(files)) * 100)
-            file_progress.append({"file": file.filename, "progress": percent})
+            progress_info.append({"file": file.filename, "progress": percent})
 
         except Exception as e:
             print(f"Failed to process {file.filename}: {e}")
-            file_progress.append({"file": file.filename, "progress": -1})
+            progress_info.append({"file": file.filename, "progress": -1})
 
-    return jsonify({"table_data": all_rows, "file_progress": file_progress})
+    return jsonify({"table_data": all_rows, "file_progress": progress_info})
 
 if __name__ == "__main__":
     app.run(debug=True)
