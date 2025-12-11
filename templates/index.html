@@ -28,6 +28,11 @@
             </div>
         </div>
 
+        <!-- Progress Bar -->
+        <div id="progressContainer" class="w-full bg-slate-200 rounded-lg h-4 mb-4 hidden">
+            <div id="progressBar" class="bg-blue-600 h-4 rounded-lg w-0 text-xs text-white text-center"></div>
+        </div>
+
         <div id="loading" class="hidden flex-col items-center justify-center py-10">
             <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div>
             <p class="text-slate-500 mt-3 animate-pulse">Analyzing document structure...</p>
@@ -59,8 +64,25 @@
             document.getElementById('uploadBtn').disabled = true;
             document.getElementById('uploadBtn').innerText = "Processing...";
 
+            const progressContainer = document.getElementById('progressContainer');
+            const progressBar = document.getElementById('progressBar');
+            progressContainer.classList.remove('hidden');
+            progressBar.style.width = "0%";
+            progressBar.innerText = "0%";
+
             const formData = new FormData();
             formData.append('file', file);
+
+            // Simulate progress
+            let progress = 0;
+            const interval = setInterval(() => {
+                if (progress < 90) { // simulate until 90%
+                    progress += Math.random() * 5;
+                    if (progress > 90) progress = 90;
+                    progressBar.style.width = progress + "%";
+                    progressBar.innerText = Math.floor(progress) + "%";
+                }
+            }, 200);
 
             try {
                 const response = await fetch('/extract', {
@@ -72,10 +94,18 @@
 
                 if (data.error) throw new Error(data.error);
 
+                // Finish progress
+                clearInterval(interval);
+                progressBar.style.width = "100%";
+                progressBar.innerText = "100%";
+
                 // Render the table
                 buildTable(data);
 
             } catch (error) {
+                clearInterval(interval);
+                progressBar.style.width = "0%";
+                progressBar.innerText = "0%";
                 alert("Error: " + error.message);
             } finally {
                 // Reset UI
@@ -91,15 +121,12 @@
             thead.innerHTML = '';
             tbody.innerHTML = '';
 
-            // We expect the data to be in 'table_data' as requested in our Python prompt
             const rows = data.table_data;
-
             if (!rows || rows.length === 0) {
                 alert("No table data found in the document.");
                 return;
             }
 
-            // Generate Headers dynamically based on the first row's keys
             const headers = Object.keys(rows[0]);
             const headerRow = document.createElement('tr');
 
@@ -111,13 +138,12 @@
             });
             thead.appendChild(headerRow);
 
-            // Generate Rows
             rows.forEach(row => {
                 const tr = document.createElement('tr');
                 headers.forEach(header => {
                     const td = document.createElement('td');
                     td.className = "px-6 py-4 whitespace-nowrap text-sm text-slate-700";
-                    td.innerText = row[header] || "-"; // Fallback for missing data
+                    td.innerText = row[header] || "-";
                     tr.appendChild(td);
                 });
                 tbody.appendChild(tr);
