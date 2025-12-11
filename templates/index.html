@@ -13,28 +13,19 @@
     <div class="w-full max-w-4xl px-4">
         <div class="text-center mb-10">
             <h1 class="text-3xl font-bold text-slate-800">PDF to Table Converter</h1>
-            <p class="text-slate-500 mt-2">Upload PDF invoices or reports to extract data instantly.</p>
+            <p class="text-slate-500 mt-2">Upload a PDF invoice or report to extract data instantly.</p>
         </div>
 
-        <!-- File Input -->
-        <div class="bg-white p-6 rounded-xl shadow-lg border border-slate-100 mb-4">
+        <!-- Single File Input -->
+        <div class="bg-white p-6 rounded-xl shadow-lg border border-slate-100 mb-8">
             <div class="flex flex-col sm:flex-row gap-4 items-center">
-                <label
-                    class="block w-full text-sm text-slate-500 bg-white border border-slate-200 rounded-lg p-3 cursor-pointer hover:bg-slate-50">
-                    Select PDF files
-                    <input type="file" id="fileInput" accept="application/pdf" multiple class="hidden" />
-                </label>
-                <button onclick="processFiles()" id="uploadBtn"
+                <input type="file" id="fileInput" accept="application/pdf"
+                    class="block w-full text-sm text-slate-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 transition" />
+                <button onclick="processFile()" id="uploadBtn"
                     class="w-full sm:w-auto bg-blue-600 text-white px-6 py-2.5 rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
                     Extract Data
                 </button>
             </div>
-            <p class="text-xs text-slate-400 mt-2">Hold Ctrl (Windows) or Cmd (Mac) to select multiple files.</p>
-        </div>
-
-        <!-- Progress Container -->
-        <div id="progressContainer" class="w-full bg-slate-200 rounded-lg h-auto mb-4 hidden p-2">
-            <div id="fileProgressList" class="flex flex-col gap-2"></div>
         </div>
 
         <!-- Loading Spinner -->
@@ -55,63 +46,34 @@
     </div>
 
     <script>
-        async function processFiles() {
+        async function processFile() {
             const fileInput = document.getElementById('fileInput');
-            const files = fileInput.files;
+            const file = fileInput.files[0];
 
-            if (!files || files.length === 0) {
-                alert("Please select at least one PDF file.");
+            if (!file) {
+                alert("Please select a PDF file first.");
                 return;
             }
 
-            // UI toggle
+            // Toggle UI
             document.getElementById('loading').classList.remove('hidden');
             document.getElementById('resultArea').classList.add('hidden');
             document.getElementById('uploadBtn').disabled = true;
             document.getElementById('uploadBtn').innerText = "Processing...";
 
-            const progressContainer = document.getElementById('progressContainer');
-            const fileProgressList = document.getElementById('fileProgressList');
-            progressContainer.classList.remove('hidden');
-            fileProgressList.innerHTML = '';
-
-            // Initialize progress for each file
-            for (let i = 0; i < files.length; i++) {
-                const div = document.createElement('div');
-                div.id = `file-${i}`;
-                div.className = "w-full bg-slate-300 rounded-lg h-4 relative overflow-hidden";
-                div.innerHTML = `
-                    <div class="bg-blue-600 h-4 rounded-lg w-0 text-xs text-white text-center" id="bar-${i}">0%</div>
-                    <span class="absolute left-2 top-0 text-xs text-white">${files[i].name}</span>
-                `;
-                fileProgressList.appendChild(div);
-            }
-
             const formData = new FormData();
-            for (let i = 0; i < files.length; i++) {
-                formData.append('file', files[i]);
-            }
+            formData.append('file', file);
 
             try {
-                const response = await fetch('/extract', { method: 'POST', body: formData });
+                const response = await fetch('/extract', {
+                    method: 'POST',
+                    body: formData
+                });
+
                 const data = await response.json();
 
                 if (data.error) throw new Error(data.error);
 
-                // Update file progress bars
-                data.file_progress.forEach((f, idx) => {
-                    const bar = document.getElementById(`bar-${idx}`);
-                    if (f.progress >= 0) {
-                        bar.style.width = f.progress + "%";
-                        bar.innerText = f.progress + "%";
-                    } else {
-                        bar.style.width = "100%";
-                        bar.classList.add("bg-red-600");
-                        bar.innerText = "Failed";
-                    }
-                });
-
-                // Build result table
                 buildTable(data);
 
             } catch (error) {
