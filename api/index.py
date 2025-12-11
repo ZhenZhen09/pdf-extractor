@@ -5,17 +5,25 @@ import os
 import json
 import io
 from PIL import Image
-import requests  # For Groq fallback
+import requests
+from dotenv import load_dotenv
+
+# Load env vars
+load_dotenv()
+
+# API Keys
+GENIE_API_KEY = os.getenv("GOOGLE_API_KEY")  # Optional
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")     # Required
+
+if not GROQ_API_KEY:
+    raise ValueError("Please set GROQ_API_KEY in your environment or .env file.")
+
+# Configure Google Gemini if key is provided
+if GENIE_API_KEY:
+    genai.configure(api_key=GENIE_API_KEY)
 
 app = Flask(__name__, template_folder='../templates')
 
-# Configure API keys
-GENIE_API_KEY = os.environ.get("GOOGLE_API_KEY")
-GROQ_API_KEY = "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"
-
-genai.configure(api_key=GENIE_API_KEY)
-
-# Target table headers
 TABLE_HEADERS = [
     "Customer Name",
     "Transaction Number",
@@ -35,14 +43,18 @@ def pdf_page_to_image(pdf_stream):
     return Image.open(io.BytesIO(img_data))
 
 def extract_table_from_image_gemini(image):
-    """Try extracting table from image using Google Gemini."""
+    """Try extracting table using Google Gemini."""
+    if not GENIE_API_KEY:
+        return None
+
     image.thumbnail((1024, 1024))
     model = genai.GenerativeModel("gemini-2.5-flash")
     prompt = f"""
-    Extract table data with the following columns:
+    Extract a table with the following columns:
     {', '.join(TABLE_HEADERS)}
-    Return valid JSON with key "table_data" containing a list of row objects.
+    Return valid JSON with key "table_data".
     """
+
     try:
         response = model.generate_content(
             [prompt, image],
@@ -55,22 +67,36 @@ def extract_table_from_image_gemini(image):
         return None
 
 def extract_table_from_image_groq(image_bytes):
-    """Fallback extraction using Groq API."""
-    url = "https://api.groq.com/v1/extract"
+    """Fallback using Groq OpenAI‑compatible Responses API."""
+    url = "https://api.groq.com/openai/v1/responses"
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json"
     }
+
+    prompt = f"""
+    Extract a table with the following columns:
+    {', '.join(TABLE_HEADERS)}
+    Return valid JSON with key "table_data".
+    """
+
+    # Uses a supported Groq model with structured output
+    groq_model = "openai/gpt-oss-20b"
+
     payload = {
-        "input_type": "image",
-        "image_base64": image_bytes.decode("latin1"),
-        "columns": TABLE_HEADERS
+        "model": groq_model,
+        "input": prompt + "\n" + image_bytes.decode("latin1")
     }
+
     try:
-        r = requests.post(url, headers=headers, json=payload, timeout=60)
+        r = requests.post(url, headers=headers, json=payload, timeout=90)
         r.raise_for_status()
         data = r.json()
-        return data.get("table_data", [])
+
+        # Groq responses API outputs text; parse JSON out of it
+        text = data.get("output_text", "")
+        return json.loads(text).get("table_data", [])
+
     except Exception as e:
         print("Groq fallback failed:", e)
         return []
@@ -93,10 +119,10 @@ def extract_data():
             pdf_bytes = file.read()
             image = pdf_page_to_image(pdf_bytes)
 
-            # Try Google Gemini first
+            # Try Gemini
             rows = extract_table_from_image_gemini(image)
 
-            # Fallback to Groq if Gemini fails
+            # Fallback to Groq if needed
             if rows is None:
                 pdf_bytes.seek(0)
                 img_bytes = io.BytesIO()
