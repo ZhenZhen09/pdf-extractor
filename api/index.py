@@ -26,9 +26,9 @@ def extract_table_from_image(image):
     model = genai.GenerativeModel("gemini-2.5-flash")
 
     prompt = """
-    Analyze this image and extract the following table columns:
+    Extract table columns:
     Customer Name | Transaction Number | Invoice Number | Original/Bal Amount | WHT Amount | Paid Amount (NET) | Description
-    Output must be a valid JSON with a key "table_data" containing a list of row objects.
+    Output JSON must have a key "table_data" containing a list of row objects.
     """
 
     response = model.generate_content(
@@ -53,15 +53,21 @@ def extract_data():
         return jsonify({"error": "No files selected"}), 400
 
     all_rows = []
+    file_progress = []
 
     try:
-        for file in files:
+        total_files = len(files)
+        for idx, file in enumerate(files):
             pdf_bytes = file.read()
             image = pdf_page_to_image(pdf_bytes)
             table_rows = extract_table_from_image(image)
             all_rows.extend(table_rows)
 
-        return jsonify({"table_data": all_rows})
+            # Append progress after each file
+            percent = int(((idx + 1) / total_files) * 100)
+            file_progress.append({"file": file.filename, "progress": percent})
+
+        return jsonify({"table_data": all_rows, "file_progress": file_progress})
 
     except Exception as e:
         print("Error:", e)
