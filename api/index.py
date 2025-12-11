@@ -40,6 +40,9 @@ def extract_data():
         pdf_bytes = file.read()
         image = pdf_page_to_image(pdf_bytes)
 
+        # ⚡ Resize image for faster processing (max 1024x1024)
+        image.thumbnail((1024, 1024))
+        
         # 🧠 Choose a supported Gemini model (from Quickstart docs) — e.g., gemini-2.5-flash
         # Supports text + image inputs with structured output capability. :contentReference[oaicite:1]{index=1}
         model = genai.GenerativeModel("gemini-2.5-flash")
